@@ -15,7 +15,9 @@ from monai.metrics import (
 )
 from torch.nn import functional as F
 
-from CCMetrics.space_separation import compute_voronoi_regions as space_separation
+from CCMetrics.space_separation import compute_voronoi_regions_fast as space_separation
+
+DEBUG_MODE = True  # Set to True for debugging purposes
 
 
 class CCBaseMetric:
@@ -72,6 +74,7 @@ class CCBaseMetric:
         if self.use_caching and not os.path.exists(self.caching_dir):
             os.makedirs(self.caching_dir)
 
+    @torch.inference_mode()
     def __call__(self, y_pred, y):
         """
         Calculates the metric for the predicted and ground truth tensors.
@@ -119,12 +122,14 @@ class CCBaseMetric:
         assert (
             y.shape[0] == 1
         ), f"Currently only a batch size of 1 is supported. Got {y.shape[0]} in y"
-        # Collect from previous runs
-        gc.collect()
 
-        # Check if pure backgorund class
-        if y[0].argmax(0).sum() == 0:
-            if y_pred[0].argmax(0).sum() == 0:
+        # Compute argmax
+        pred_helper = y_pred.argmax(1)
+        label_helper = y.argmax(1)
+
+        # Check if pure background class
+        if label_helper[0].sum() == 0:
+            if pred_helper[0].sum() == 0:
                 # Case perfect prediction: No foreground class present in prediction
                 self.buffer_collection.append(torch.tensor([self.metric_perfect_score]))
             else:
@@ -132,48 +137,66 @@ class CCBaseMetric:
                 self.buffer_collection.append(torch.tensor([self.metric_worst_score]))
             return
 
-        # Get separation as by ground-truth
-        if self.use_caching:
-
-            gt_fingerprint = hashlib.md5(
-                y[0].argmax(0).cpu().numpy().tobytes()
-            ).hexdigest()
-            target_path = f"{os.path.join(self.caching_dir, gt_fingerprint)}.npy"
-            if os.path.exists(target_path):
-                cc_assignment = np.load(target_path)
-            else:
-                cc_assignment = space_separation(y[0].argmax(0).cpu().numpy())
-                np.save(target_path, cc_assignment)
-        else:
-            cc_assignment = space_separation(y[0].argmax(0).cpu().numpy())
-
+        # Still based on numpy
+        cc_assignment = space_separation(label_helper[0])
         cc_assignment = torch.from_numpy(cc_assignment).type(torch.int64)
 
         missed_components = 0
 
         for cc_id in cc_assignment.unique().tolist():
-            pred_helper = copy.deepcopy(y_pred[0]).argmax(0)
-            label_helper = copy.deepcopy(y[0]).argmax(0)
-            # Find current region of interest
             cc_mask = cc_assignment == cc_id
-            pred_helper[torch.logical_not(cc_mask)] = 0
-            label_helper[torch.logical_not(cc_mask)] = 0
-            if pred_helper.sum() == 0:
+
+            if DEBUG_MODE:
+                # Compute min bounding box for debugging
+                min_corner_idx, _ = cc_mask.nonzero().min(axis=0)
+                max_corner_idx, _ = cc_mask.nonzero().max(axis=0)
+
+                # Cut out the region of interest
+                crop_pred = pred_helper[0][
+                    min_corner_idx[0] : max_corner_idx[0] + 1,
+                    min_corner_idx[1] : max_corner_idx[1] + 1,
+                    min_corner_idx[2] : max_corner_idx[2] + 1,
+                ]
+                crop_label = label_helper[0][
+                    min_corner_idx[0] : max_corner_idx[0] + 1,
+                    min_corner_idx[1] : max_corner_idx[1] + 1,
+                    min_corner_idx[2] : max_corner_idx[2] + 1,
+                ]
+                pred_masked = (
+                    crop_pred
+                    * cc_mask[
+                        min_corner_idx[0] : max_corner_idx[0] + 1,
+                        min_corner_idx[1] : max_corner_idx[1] + 1,
+                        min_corner_idx[2] : max_corner_idx[2] + 1,
+                    ]
+                )
+                label_masked = (
+                    crop_label
+                    * cc_mask[
+                        min_corner_idx[0] : max_corner_idx[0] + 1,
+                        min_corner_idx[1] : max_corner_idx[1] + 1,
+                        min_corner_idx[2] : max_corner_idx[2] + 1,
+                    ]
+                )
+
+            if pred_masked.sum() == 0:
                 missed_components += 1
 
             # Remap metrics back to one-hot encoding
-            pred_helper = F.one_hot(pred_helper, num_classes=2).permute(3, 0, 1, 2)
-            label_helper = F.one_hot(label_helper, num_classes=2).permute(3, 0, 1, 2)
+            pred_onehot = F.one_hot(pred_masked, num_classes=2).permute(3, 0, 1, 2)
+            label_onehot = F.one_hot(label_masked, num_classes=2).permute(3, 0, 1, 2)
 
             self.base_metric(
-                y_pred=pred_helper.unsqueeze(0), y=label_helper.unsqueeze(0)
+                y_pred=pred_onehot.unsqueeze(0), y=label_onehot.unsqueeze(0)
             )
-            del pred_helper
-            del label_helper
-            del cc_mask
-            gc.collect()
 
-        # Get metric buffer and reset it
+            del crop_pred, crop_label, pred_masked, label_masked
+            del cc_mask
+            # gc.collect()
+        del pred_helper
+        del label_helper
+
+        # Get metric buffer and reset it #TODO: Check if intermediate aggregation is possible... Cache intermediate results instaad of keeping arrays in memory
         metric_buffer = self.base_metric.get_buffer()
         self.buffer_collection.append(metric_buffer)
         self.base_metric.reset()
