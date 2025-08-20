@@ -145,39 +145,36 @@ class CCBaseMetric:
 
         for cc_id in cc_assignment.unique().tolist():
             cc_mask = cc_assignment == cc_id
+            min_corner_idx, _ = cc_mask.nonzero().min(axis=0)
+            max_corner_idx, _ = cc_mask.nonzero().max(axis=0)
 
-            if DEBUG_MODE:
-                # Compute min bounding box for debugging
-                min_corner_idx, _ = cc_mask.nonzero().min(axis=0)
-                max_corner_idx, _ = cc_mask.nonzero().max(axis=0)
-
-                # Cut out the region of interest
-                crop_pred = pred_helper[0][
+            # Cut out the region of interest
+            crop_pred = pred_helper[0][
+                min_corner_idx[0] : max_corner_idx[0] + 1,
+                min_corner_idx[1] : max_corner_idx[1] + 1,
+                min_corner_idx[2] : max_corner_idx[2] + 1,
+            ]
+            crop_label = label_helper[0][
+                min_corner_idx[0] : max_corner_idx[0] + 1,
+                min_corner_idx[1] : max_corner_idx[1] + 1,
+                min_corner_idx[2] : max_corner_idx[2] + 1,
+            ]
+            pred_masked = (
+                crop_pred
+                * cc_mask[
                     min_corner_idx[0] : max_corner_idx[0] + 1,
                     min_corner_idx[1] : max_corner_idx[1] + 1,
                     min_corner_idx[2] : max_corner_idx[2] + 1,
                 ]
-                crop_label = label_helper[0][
+            )
+            label_masked = (
+                crop_label
+                * cc_mask[
                     min_corner_idx[0] : max_corner_idx[0] + 1,
                     min_corner_idx[1] : max_corner_idx[1] + 1,
                     min_corner_idx[2] : max_corner_idx[2] + 1,
                 ]
-                pred_masked = (
-                    crop_pred
-                    * cc_mask[
-                        min_corner_idx[0] : max_corner_idx[0] + 1,
-                        min_corner_idx[1] : max_corner_idx[1] + 1,
-                        min_corner_idx[2] : max_corner_idx[2] + 1,
-                    ]
-                )
-                label_masked = (
-                    crop_label
-                    * cc_mask[
-                        min_corner_idx[0] : max_corner_idx[0] + 1,
-                        min_corner_idx[1] : max_corner_idx[1] + 1,
-                        min_corner_idx[2] : max_corner_idx[2] + 1,
-                    ]
-                )
+            )
 
             if pred_masked.sum() == 0:
                 missed_components += 1
@@ -192,7 +189,7 @@ class CCBaseMetric:
 
             del crop_pred, crop_label, pred_masked, label_masked
             del cc_mask
-            # gc.collect()
+            gc.collect()
         del pred_helper
         del label_helper
 
@@ -201,6 +198,7 @@ class CCBaseMetric:
         self.buffer_collection.append(metric_buffer)
         self.base_metric.reset()
 
+    @torch.inference_mode()
     def cc_aggregate(self, mode=None):
         """
         Aggregates the buffer collection based on the specified mode.
