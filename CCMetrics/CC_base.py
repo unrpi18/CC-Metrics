@@ -17,8 +17,6 @@ from torch.nn import functional as F
 
 from CCMetrics.space_separation import compute_voronoi_regions_fast as space_separation
 
-DEBUG_MODE = True  # Set to True for debugging purposes
-
 
 class CCBaseMetric:
 
@@ -26,7 +24,7 @@ class CCBaseMetric:
         self,
         BaseMetric: Cumulative,
         *args,
-        use_caching=True,
+        use_caching=False,
         caching_dir=".cache",
         metric_best_score=None,
         metric_worst_score=None,
