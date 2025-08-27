@@ -6,4 +6,9 @@ from CCMetrics.CC_base import (
     CCSurfaceDiceMetric,
     CCSurfaceDistanceMetric,
 )
-from CCMetrics.CC_base_gpu import CCBaseMetricGPU
+
+try:
+    from CCMetrics.CC_base_gpu import CCBaseMetricGPU
+except ImportError:
+    # CuPy not available, GPU functionality will not be available
+    CCBaseMetricGPU = None
