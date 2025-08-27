@@ -1,0 +1,88 @@
+import gc
+import hashlib
+import os
+
+import numpy as np
+import torch
+
+from CCMetrics.CC_base import CCBaseMetric
+
+try:
+    import cupy as cp
+except ImportError:
+    raise ImportError(
+        "CuPy is required for CCBaseMetricGPU. Please install CuPy to use this feature."
+    )
+
+assert (
+    cp.cuda.is_available()
+), "CUDA is not available. Please ensure you have a compatible GPU and CUDA installed."
+from CCMetrics.space_separation_on_gpu import compute_voronoi_regions_fast_on_gpu
+
+
+class CCBaseMetricGPU(CCBaseMetric):
+    """
+    CCBaseMetricGPU is a class that represents the base metric for connected components on GPU.
+    The computation of the Metric stays within Monai and the CPU, but preprocessing is done on GPU.
+    """
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.xp = cp
+        self.space_separation = compute_voronoi_regions_fast_on_gpu
+
+    def _verify_and_convert(self, y_pred, y):
+        # Automatically convert to cupy if numpy is given
+        if isinstance(y_pred, np.ndarray):
+            y_pred = cp.asarray(y_pred)
+        if isinstance(y, np.ndarray):
+            y = cp.asarray(y)
+
+        # Automatically convert to cupy if torch is given
+        if isinstance(y_pred, torch.Tensor):
+            if y_pred.is_cuda:
+                y_pred = cp.fromDlpack(torch.utils.dlpack.to_dlpack(y_pred))
+            else:
+                y_pred = cp.asarray(y_pred.detach().numpy())
+        if isinstance(y, torch.Tensor):
+            if y.is_cuda:
+                y = cp.fromDlpack(torch.utils.dlpack.to_dlpack(y))
+            else:
+                y = cp.asarray(y.detach().numpy())
+
+        assert isinstance(
+            y_pred, cp.ndarray
+        ), f"y_pred must be a cupy array, numpy array or torch tensor. Got {type(y_pred)}"
+        assert isinstance(
+            y, cp.ndarray
+        ), f"y must be a cupy array, numpy array or torch tensor. Got {type(y)}"
+
+        # Check conditions
+        assert (
+            len(y_pred.shape) == 5
+        ), "Input shape is not correct. Expected shape: (B,C,D,H,W) as input y_pred"
+        assert (
+            len(y.shape) == 5
+        ), "Input shape is not correct. Expected shape: (B,C,D,H,W) as input y"
+        assert (
+            y_pred.shape == y.shape
+        ), f"Input shapes do not match. Got {y_pred.shape} and {y.shape}"
+        assert (
+            y_pred.shape[1] == 2
+        ), f"Expected two classes in the input. Got {y_pred.shape[1]}"
+        assert y.shape[1] == 2, f"Expected two classes in the input. Got {y.shape[1]}"
+        assert (
+            y_pred.shape[0] == 1
+        ), f"Currently only a batch size of 1 is supported. Got {y_pred.shape[0]} in y_pred"
+        assert (
+            y.shape[0] == 1
+        ), f"Currently only a batch size of 1 is supported. Got {y.shape[0]} in y"
+
+        return y_pred, y
+
+    def _convert_to_target(self, y_pred, y):
+        # Convert back to torch and move to CPU
+        y_pred = torch.from_dlpack(cp.asarray(y_pred).toDlpack()).cpu()
+        y = torch.from_dlpack(cp.asarray(y).toDlpack()).cpu()
+
+        return y_pred, y

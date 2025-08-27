@@ -6,3 +6,4 @@ from CCMetrics.CC_base import (
     CCSurfaceDiceMetric,
     CCSurfaceDistanceMetric,
 )
+from CCMetrics.CC_base_gpu import CCBaseMetricGPU
