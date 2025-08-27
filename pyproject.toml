@@ -26,8 +26,7 @@ dependencies = [
     "scipy",
     "connected-components-3d",
     "nibabel",
-    "tqdm",
-    "cupy"
+    "tqdm"
 ]
 
 license = "MIT AND (Apache-2.0 OR BSD-2-Clause)"
