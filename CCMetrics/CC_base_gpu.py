@@ -9,8 +9,13 @@ from monai.metrics import (
 
 from CCMetrics.CC_base import CCBaseMetric, CCDiceMetric
 
+# Globally disable gradient computation for this entire module
+torch.set_grad_enabled(False)
+
 try:
     import cupy as cp
+
+    cp.ones(3)  # Test if CuPy is properly installed and can access GPU
 except ImportError:
     raise ImportError(
         "CuPy is required for CCBaseMetricGPU. Please install CuPy to use this feature."
@@ -31,6 +36,7 @@ class CCBaseMetricGPU(CCBaseMetric):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.xp = cp
+        self.backend = "cupy"
         self.space_separation = compute_voronoi_regions_fast_on_gpu
 
     def _verify_and_convert(self, y_pred, y):

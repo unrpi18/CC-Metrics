@@ -14,6 +14,9 @@ from monai.metrics import (
 
 from CCMetrics.space_separation import compute_voronoi_regions_fast
 
+# Globally disable gradient computation for this entire module
+torch.set_grad_enabled(False)
+
 
 class CCBaseMetric:
 
@@ -71,7 +74,7 @@ class CCBaseMetric:
 
         # Set cpu backend
         self.xp = np
-
+        self.backend = "numpy"
         self.space_separation = compute_voronoi_regions_fast
 
     def _verify_and_convert(self, y_pred, y):
@@ -119,7 +122,6 @@ class CCBaseMetric:
             y = torch.from_numpy(y)
         return y_pred, y
 
-    @torch.inference_mode()
     def __call__(self, y_pred, y):
         """
         Calculates the metric for the predicted and ground truth tensors.
@@ -213,7 +215,6 @@ class CCBaseMetric:
         self.buffer_collection.append(metric_buffer)
         self.base_metric.reset()
 
-    @torch.inference_mode()
     def cc_aggregate(self, mode=None):
         """
         Aggregates the buffer collection based on the specified mode.
@@ -356,11 +357,12 @@ class CCDiceMetric(CCBaseMetric):
         TN, FP, FN, TP = hist[:, 0], hist[:, 1], hist[:, 2], hist[:, 3]
         denom = 2 * TP + FP + FN
         dice_scores = self.xp.where(denom > 0, (2 * TP) / denom, 1.0)
-
-        dice_scores_t = torch.from_numpy(
-            self.xp.asnumpy(dice_scores)
-        )  # cp/np → np → torch CPU
-        self.buffer_collection.append(dice_scores_t.unsqueeze(-1))
+        dice_scores = (
+            torch.from_numpy(self.xp.asnumpy(dice_scores))
+            if self.backend == "cupy"
+            else torch.from_numpy(dice_scores)
+        )
+        self.buffer_collection.append(dice_scores.unsqueeze(-1))
 
 
 class CCHausdorffDistanceMetric(CCBaseMetric):
