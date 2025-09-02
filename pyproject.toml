@@ -36,5 +36,10 @@ license-files = ["LICENSE"]
 Homepage = "https://github.com/alexanderjaus/CC-Metrics"
 Issues = "https://github.com/alexanderjaus/CC-Metrics/issues"
 
+[project.optional-dependencies]
+test = ["pytest"]
+gpu = ["cupy-cuda12x"]  # for CUDA 12.x
+all = ["pytest", "cupy-cuda12x"]  #all optimal dependencies
+
 [tool.setuptools.packages.find]
 include = ["CCMetrics"]
