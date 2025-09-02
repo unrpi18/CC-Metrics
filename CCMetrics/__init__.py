@@ -8,7 +8,21 @@ from CCMetrics.CC_base import (
 )
 
 try:
-    from CCMetrics.CC_base_gpu import CCBaseMetricGPU
+    from CCMetrics.CC_base_gpu import (
+        CCBaseMetricGPU,
+        CCDiceMetricGPU,
+        CCHausdorffDistance95MetricGPU,
+        CCHausdorffDistanceMetricGPU,
+        CCSurfaceDiceMetricGPU,
+        CCSurfaceDistanceMetricGPU,
+    )
 except ImportError:
     # CuPy not available, GPU functionality will not be available
-    CCBaseMetricGPU = None
+    (
+        CCBaseMetricGPU,
+        CCDiceMetricGPU,
+        CCHausdorffDistanceMetricGPU,
+        CCHausdorffDistance95MetricGPU,
+        CCSurfaceDistanceMetricGPU,
+        CCSurfaceDiceMetricGPU,
+    ) = (None, None, None, None, None, None)

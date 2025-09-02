@@ -1,11 +1,13 @@
-import gc
-import hashlib
-import os
-
 import numpy as np
 import torch
+from monai.metrics import (
+    DiceMetric,
+    HausdorffDistanceMetric,
+    SurfaceDiceMetric,
+    SurfaceDistanceMetric,
+)
 
-from CCMetrics.CC_base import CCBaseMetric
+from CCMetrics.CC_base import CCBaseMetric, CCDiceMetric
 
 try:
     import cupy as cp
@@ -86,3 +88,89 @@ class CCBaseMetricGPU(CCBaseMetric):
         y = torch.from_dlpack(cp.asarray(y).toDlpack()).cpu()
 
         return y_pred, y
+
+
+class CCDiceMetricGPU(CCDiceMetric, CCBaseMetricGPU):
+    """
+    Uses CCDiceMetric.__call__ (bincount path) unchanged,
+    while taking _verify_and_convert/xp/space_separation from CCBaseMetricGPU.
+    """
+
+    def __init__(self, *args, **kwargs):
+        # Explicitly call the GPU base init instead of CCDiceMetric.__init__
+        CCBaseMetricGPU.__init__(
+            self,
+            DiceMetric,
+            metric_best_score=1.0,
+            metric_worst_score=0.0,
+            **kwargs,
+        )
+
+
+class CCHausdorffDistanceMetricGPU(CCBaseMetricGPU):
+    """
+    CCHausdorffDistanceMetric is a class that represents the Hausdorff distance metric for connected components on GPU.
+    It inherits from the CCBaseMetricGPU class.
+    """
+
+    def __init__(self, *args, **kwargs):
+        # Explicitly call the GPU base init instead of CCDiceMetric.__init__
+        super().__init__(
+            HausdorffDistanceMetric,
+            *args,
+            metric_best_score=0.0,
+            metric_worst_score=50.0,
+            **kwargs,
+        )
+
+
+class CCHausdorffDistance95MetricGPU(CCBaseMetricGPU):
+    """
+    A class representing a metric for calculating the 95th percentile Hausdorff distance for connected components on GPU.
+    It inherits from the CCBaseMetricGPU class.
+    """
+
+    def __init__(self, *args, **kwargs):
+        # Explicitly call the GPU base init instead of CCDiceMetric.__init__
+        super().__init__(
+            HausdorffDistanceMetric,
+            *args,
+            metric_best_score=0.0,
+            percentile=95,
+            metric_worst_score=50.0,
+            **kwargs,
+        )
+
+
+class CCSurfaceDistanceMetricGPU(CCBaseMetricGPU):
+    """
+    A class representing a metric for calculating the SurfaceDistance metric for connected components on GPU.
+    It inherits from the CCBaseMetricGPU class.
+    """
+
+    def __init__(self, *args, **kwargs):
+        # Explicitly call the GPU base init instead of CCDiceMetric.__init__
+        super().__init__(
+            SurfaceDistanceMetric,
+            *args,
+            metric_best_score=0.0,
+            metric_worst_score=50.0,
+            **kwargs,
+        )
+
+
+class CCSurfaceDiceMetricGPU(CCBaseMetricGPU):
+    """
+    A class representing a metric for calculating the SurfaceDiceMetric metric for connected components on GPU.
+    It inherits from the CCBaseMetricGPU class.
+    """
+
+    def __init__(self, *args, **kwargs):
+        # Explicitly call the GPU base init instead of CCDiceMetric.__init__
+        super().__init__(
+            SurfaceDiceMetric,
+            *args,
+            metric_best_score=1.0,
+            metric_worst_score=0.0,
+            **kwargs,
+        )

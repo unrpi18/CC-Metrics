@@ -71,6 +71,7 @@ class CCBaseMetric:
 
         # Set cpu backend
         self.xp = np
+
         self.space_separation = compute_voronoi_regions_fast
 
     def _verify_and_convert(self, y_pred, y):
@@ -319,6 +320,47 @@ class CCDiceMetric(CCBaseMetric):
         super().__init__(
             DiceMetric, *args, metric_best_score=1.0, metric_worst_score=0.0, **kwargs
         )
+
+    def __call__(self, y_pred, y):
+        """
+        Calculates the Dice metric for the predicted and ground truth tensors.
+        Args:
+            y_pred (numpy.ndarray or torch.Tensor): The predicted tensor.
+            y (numpy.ndarray or torch.Tensor): The ground truth tensor.
+        Raises:
+            AssertionError: If the input shapes or conditions are not correct.
+        Returns:
+            None
+        """
+        y_pred, y = self._verify_and_convert(y_pred, y)
+
+        pred_helper = y_pred.argmax(1)
+        label_helper = y.argmax(1)
+        if label_helper[0].sum() == 0:
+            if pred_helper[0].sum() == 0:
+                # Case perfect prediction: No foreground class present in prediction
+                self.buffer_collection.append(torch.tensor([self.metric_perfect_score]))
+            else:
+                # Case worst prediction: Predicted Foreground class but no GT
+                self.buffer_collection.append(torch.tensor([self.metric_worst_score]))
+            return
+        cc_assignment = self.space_separation(label_helper[0])
+
+        uniq, inv = self.xp.unique(cc_assignment.ravel(), return_inverse=True)
+
+        nof_components = uniq.size
+
+        code = label_helper.ravel() << 1 | pred_helper.ravel()
+        idx = inv << 2 | code
+        hist = self.xp.bincount(idx, minlength=nof_components * 4).reshape(-1, 4)
+        TN, FP, FN, TP = hist[:, 0], hist[:, 1], hist[:, 2], hist[:, 3]
+        denom = 2 * TP + FP + FN
+        dice_scores = self.xp.where(denom > 0, (2 * TP) / denom, 1.0)
+
+        dice_scores_t = torch.from_numpy(
+            self.xp.asnumpy(dice_scores)
+        )  # cp/np → np → torch CPU
+        self.buffer_collection.append(dice_scores_t.unsqueeze(-1))
 
 
 class CCHausdorffDistanceMetric(CCBaseMetric):
