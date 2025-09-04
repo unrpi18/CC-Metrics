@@ -1,6 +1,7 @@
 import cc3d
 import numpy as np
-from scipy.ndimage import distance_transform_edt
+from scipy.ndimage import distance_transform_edt, generate_binary_structure
+from scipy.ndimage import label as sn_label
 
 
 def compute_voronoi_regions(labels):
@@ -33,25 +34,29 @@ def compute_voronoi_regions(labels):
 
 def compute_voronoi_regions_fast(labels, connectivity=26, sampling=None):
     """
-    Voronoi assignment to connected components (CPU, single EDT).
+    Voronoi assignment to connected components (CPU, single EDT) without cc3d.
     labels>0 are seeds. Returns for each voxel the ID of the nearest component.
-    - connectivity: 6/18/26 (3D) via cc3d
+    - connectivity: 6/18/26 (3D)
     - sampling: voxel spacing for anisotropic distances (scipy.ndimage.distance_transform_edt)
-    - compact: maps component tags to 1..K (optional)
     """
-    x = np.asarray(labels)
-    cc = cc3d.connected_components(x, connectivity=connectivity)
-    if cc.max() == 0:
-        return np.zeros_like(labels)
 
-    # EDT: 0 = Seeds, 1 = Nicht-Seeds
+    x = np.asarray(labels)
+    # Map 3D connectivity to SciPy structure connectivity
+    conn_rank = {6: 1, 18: 2, 26: 3}.get(connectivity, 3)
+    structure = generate_binary_structure(rank=3, connectivity=conn_rank)
+    cc, num = sn_label(x > 0, structure=structure)
+
+    if num == 0:
+        return np.zeros_like(x, dtype=np.int32)
+
+    # EDT: 0 = seeds, 1 = non-seeds
     edt_input = np.ones(cc.shape, dtype=np.uint8)
     edt_input[cc > 0] = 0
 
-    # Indizes der nächstgelegenen Seeds (kein Distanz-Array nötig)
+    # Indices of the nearest seeds (no distance array needed)
     indices = distance_transform_edt(
         edt_input, sampling=sampling, return_distances=False, return_indices=True
     )
 
-    voronoi = cc[tuple(indices)]  # Komponententag am nächstgelegenen Seed
-    return voronoi
+    voronoi = cc[tuple(indices)]  # component tag at nearest seed
+    return voronoi.astype(np.int32, copy=False)
