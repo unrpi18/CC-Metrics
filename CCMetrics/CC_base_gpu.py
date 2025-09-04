@@ -86,6 +86,11 @@ class CCBaseMetricGPU(CCBaseMetric):
             y.shape[0] == 1
         ), f"Currently only a batch size of 1 is supported. Got {y.shape[0]} in y"
 
+        # --- Force consistent dtype once ---
+        target_dtype = cp.float64
+        y_pred = y_pred.astype(target_dtype, copy=False)
+        y = y.astype(target_dtype, copy=False)
+
         return y_pred, y
 
     def _convert_to_target(self, y_pred, y):

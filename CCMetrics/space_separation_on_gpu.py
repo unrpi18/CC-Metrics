@@ -5,7 +5,7 @@ _CONN_MAP = {6: 1, 18: 2, 26: 3}
 
 
 def compute_voronoi_regions_fast_on_gpu(
-    labels, connectivity=18, sampling=None, return_numpy=False
+    labels, connectivity=26, sampling=None, return_numpy=False
 ):
     """
     Voronoi assignment to connected components (CPU, single EDT).
