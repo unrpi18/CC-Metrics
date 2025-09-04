@@ -62,6 +62,23 @@ cd CC-Metrics
 pip install -e .
 ```
 
+### GPU Acceleration
+
+CC-Metrics includes optional GPU-accelerated preprocessing for the Voronoi space separation to speed up large-volume evaluations.
+
+- Requirements: NVIDIA GPU, CUDA 12.x, a CUDA-enabled PyTorch, and a matching CuPy build (`cupy-cuda12x`).
+- Install from PyPI with extras: `pip install "CCMetrics[gpu]"` (or `CCMetrics[all]`).
+- Install from source with extras: `pip install -e .[gpu]`.
+
+Usage example:
+
+```python
+from CCMetrics import CCDiceMetricGPU
+cc_dice_gpu = CCDiceMetricGPU(cc_reduction="patient", use_caching=False)
+```
+
+Notes on CPU/GPU parity: CPU and GPU paths share the same algorithm (single-EDT Voronoi + MONAI metrics). Minor numerical differences can occur due to library tie-breaking when assigning equidistant background voxels to components. In our checks across 441 volumes, aggregated CC‑Dice differences were very small (patient-wise mean diff ~1e-5; per-component mean diff ~5e-5), with rare worst-case patient differences up to ~3.5e-3. If exact agreement is required, run the CPU metric path.
+
 ## How to Use CC-Metrics
 
 CC-Metrics defines wrappers around MONAI's Cumulative metrics to enable per-component evaluation.
