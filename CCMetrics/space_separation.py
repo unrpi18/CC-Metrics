@@ -1,7 +1,7 @@
 import cc3d
 import numpy as np
-from scipy.ndimage import distance_transform_edt
-from scipy.spatial import cKDTree
+from scipy.ndimage import distance_transform_edt, generate_binary_structure
+from scipy.ndimage import label as sn_label
 
 
 def compute_voronoi_regions(labels):
@@ -32,36 +32,31 @@ def compute_voronoi_regions(labels):
     return cc_asignment
 
 
-def compute_voronoi_kdtree(labels):
+def compute_voronoi_regions_fast(labels, connectivity=26, sampling=None):
     """
-    Computes the Voronoi diagram using a KDTree for a given label image.
-
-    Parameters:
-        labels (ndarray): The label image.
-
-    Returns:
-        ndarray: Array of Voronoi region assignments.
+    Voronoi assignment to connected components (CPU, single EDT) without cc3d.
+    labels>0 are seeds. Returns for each voxel the ID of the nearest component.
+    - connectivity: 6/18/26 (3D)
+    - sampling: voxel spacing for anisotropic distances (scipy.ndimage.distance_transform_edt)
     """
-    cc_labels = cc3d.connected_components(labels)
-    output = np.zeros_like(cc_labels, dtype=np.int32)
 
-    coords = np.column_stack(np.nonzero(cc_labels))
-    cc_ids = cc_labels[cc_labels > 0]
-    unique_ccs = np.unique(cc_ids)
+    x = np.asarray(labels)
+    # Map 3D connectivity to SciPy structure connectivity
+    conn_rank = {6: 1, 18: 2, 26: 3}.get(connectivity, 3)
+    structure = generate_binary_structure(rank=3, connectivity=conn_rank)
+    cc, num = sn_label(x > 0, structure=structure)
 
-    # Map each cc_id to its voxel coordinates
-    cc_points = {cc: coords[cc_ids == cc] for cc in unique_ccs}
+    if num == 0:
+        return np.zeros_like(x, dtype=np.int32)
 
-    # Build a KDTree using all foreground voxels, tagged with their cc_id
-    all_pts = np.concatenate([cc_points[cc] for cc in unique_ccs])
-    all_tags = np.concatenate([[cc] * len(cc_points[cc]) for cc in unique_ccs])
+    # EDT: 0 = seeds, 1 = non-seeds
+    edt_input = np.ones(cc.shape, dtype=np.uint8)
+    edt_input[cc > 0] = 0
 
-    tree = cKDTree(all_pts)
+    # Indices of the nearest seeds (no distance array needed)
+    indices = distance_transform_edt(
+        edt_input, sampling=sampling, return_distances=False, return_indices=True
+    )
 
-    # For each voxel in the volume, find the nearest foreground point and assign its cc_id
-    all_voxels = np.indices(cc_labels.shape).reshape(3, -1).T
-    dists, idxs = tree.query(all_voxels)
-    nearest_ccs = all_tags[idxs]
-    output = nearest_ccs.reshape(cc_labels.shape)
-
-    return output
+    voronoi = cc[tuple(indices)]  # component tag at nearest seed
+    return voronoi.astype(np.int32, copy=False)

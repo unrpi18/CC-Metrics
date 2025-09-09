@@ -1,12 +1,24 @@
 import os
+import os as _os
 import shutil
+import warnings as _warnings
 from typing import Dict, List, Tuple
 
 import pytest
 import torch
+from monai.metrics import DiceMetric
 from torch import Tensor
 
 from CCMetrics import CCDiceMetric, CCHausdorffDistance95Metric, CCSurfaceDiceMetric
+from CCMetrics.CC_base import CCBaseMetric
+
+# Detect CuPy/CUDA availability without importing CCMetrics.CC_base_gpu (which asserts)
+try:
+    import cupy as _cp  # type: ignore
+
+    HAS_CUPY_CUDA = bool(_cp.cuda.is_available())
+except Exception:
+    HAS_CUPY_CUDA = False
 
 
 @pytest.fixture(
@@ -242,3 +254,138 @@ def test_cc_dice_aggregation_modes(
         abs(score - expected_dice) < tolerance
         for score in patient_scores + component_scores
     ), "All scores should match theoretical value"
+
+
+def _import_gpu_dice():
+    """Helper to import GPU Dice metric lazily when CUDA is available."""
+    if not HAS_CUPY_CUDA:
+        pytest.skip("CuPy/CUDA not available; skipping GPU tests")
+    # Import only when CUDA is present to avoid ImportError/asserts
+    from CCMetrics.CC_base_gpu import CCDiceMetricGPU  # type: ignore
+
+    return CCDiceMetricGPU
+
+
+def test_gpu_dice_matches_cpu_single(sample_data: Tuple[Tensor, Tensor]) -> None:
+    """
+    Ensure GPU CCDiceMetric computes the same as CPU CCDiceMetric on a single sample.
+    Skips if CuPy/CUDA are not available.
+    """
+    CCDiceMetricGPU = _import_gpu_dice()
+
+    y, y_hat = sample_data
+    cpu = CCDiceMetric(cc_reduction="patient")
+    gpu = CCDiceMetricGPU(cc_reduction="patient")
+
+    cpu(y_pred=y_hat, y=y)
+    gpu(y_pred=y_hat, y=y)
+
+    cpu_val = float(cpu.cc_aggregate().mean().item())
+    gpu_val = float(gpu.cc_aggregate().mean().item())
+    assert abs(cpu_val - gpu_val) < 1e-6
+
+
+def test_gpu_dice_matches_cpu_multi(
+    multi_patient_data: Tuple[List[Tensor], List[Tensor]]
+) -> None:
+    """
+    Ensure GPU CCDiceMetric matches CPU for both 'patient' and 'overall' aggregations.
+    Skips if CuPy/CUDA are not available.
+    """
+    CCDiceMetricGPU = _import_gpu_dice()
+
+    y_list, y_hat_list = multi_patient_data
+
+    cpu_patient = CCDiceMetric(cc_reduction="patient")
+    gpu_patient = CCDiceMetricGPU(cc_reduction="patient")
+
+    cpu_overall = CCDiceMetric(cc_reduction="overall")
+    gpu_overall = CCDiceMetricGPU(cc_reduction="overall")
+
+    for y, y_hat in zip(y_list, y_hat_list):
+        cpu_patient(y_pred=y_hat, y=y)
+        gpu_patient(y_pred=y_hat, y=y)
+        cpu_overall(y_pred=y_hat, y=y)
+        gpu_overall(y_pred=y_hat, y=y)
+
+    cp_p = cpu_patient.cc_aggregate().detach().cpu().numpy()
+    gp_p = gpu_patient.cc_aggregate().detach().cpu().numpy()
+    assert cp_p.shape == gp_p.shape
+    assert ((cp_p - gp_p) ** 2).sum() < 1e-10
+
+    cp_o = cpu_overall.cc_aggregate().detach().cpu().numpy()
+    gp_o = gpu_overall.cc_aggregate().detach().cpu().numpy()
+    assert cp_o.shape == gp_o.shape
+    assert ((cp_o - gp_o) ** 2).sum() < 1e-10
+
+
+def test_dice_consistency_cpu_single(sample_data: Tuple[Tensor, Tensor]) -> None:
+    """
+    Compare CCDiceMetric (vectorized bincount) with CCBaseMetric(DiceMetric)
+    on a single sample to ensure both implementations agree.
+    """
+    y, y_hat = sample_data
+
+    cc_fast = CCDiceMetric(cc_reduction="patient")
+    cc_ref = CCBaseMetric(
+        DiceMetric,
+        cc_reduction="patient",
+        metric_best_score=1.0,
+        metric_worst_score=0.0,
+    )
+
+    cc_fast(y_pred=y_hat, y=y)
+    cc_ref(y_pred=y_hat, y=y)
+
+    fast_val = cc_fast.cc_aggregate().detach().cpu().numpy()
+    ref_val = cc_ref.cc_aggregate().detach().cpu().numpy()
+
+    assert fast_val.shape == ref_val.shape == (1,)
+    assert abs(float(fast_val[0]) - float(ref_val[0])) < 1e-6
+
+
+def test_dice_consistency_cpu_multi(
+    multi_patient_data: Tuple[List[Tensor], List[Tensor]]
+) -> None:
+    """
+    Compare CCDiceMetric and CCBaseMetric(DiceMetric) across multiple patients for
+    both aggregation modes: 'patient' and 'overall'.
+    """
+    y_list, y_hat_list = multi_patient_data
+
+    # Patient aggregation
+    fast_patient = CCDiceMetric(cc_reduction="patient")
+    ref_patient = CCBaseMetric(
+        DiceMetric,
+        cc_reduction="patient",
+        metric_best_score=1.0,
+        metric_worst_score=0.0,
+    )
+
+    # Overall aggregation
+    fast_overall = CCDiceMetric(cc_reduction="overall")
+    ref_overall = CCBaseMetric(
+        DiceMetric,
+        cc_reduction="overall",
+        metric_best_score=1.0,
+        metric_worst_score=0.0,
+    )
+
+    for y, y_hat in zip(y_list, y_hat_list):
+        fast_patient(y_pred=y_hat, y=y)
+        ref_patient(y_pred=y_hat, y=y)
+        fast_overall(y_pred=y_hat, y=y)
+        ref_overall(y_pred=y_hat, y=y)
+
+    # Compare patient-wise results
+    fp = fast_patient.cc_aggregate().detach().cpu().numpy()
+    rp = ref_patient.cc_aggregate().detach().cpu().numpy()
+    assert fp.shape == rp.shape
+    assert ((fp - rp) ** 2).sum() < 1e-10
+
+    # Compare overall (per-component) results
+    fo = fast_overall.cc_aggregate().detach().cpu().numpy()
+    ro = ref_overall.cc_aggregate().detach().cpu().numpy()
+    assert fo.shape == ro.shape
+    # Order of components should match because both use the same space separation
+    assert ((fo - ro) ** 2).sum() < 1e-10

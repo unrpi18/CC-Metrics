@@ -12,6 +12,12 @@ Traditional metrics often fail to adequately capture the performance of models i
 3. Mapping predictions within each Voronoi region to the corresponding ground-truth component
 4. Computing standard metrics on these mapped regions for more granular assessment
 
+### Recent News from new release (v0.0.3)
+The latest version includes performance improvements:
+- **Faster Voronoi computation**: New `compute_voronoi_regions_fast` implementation using single EDT computation
+- **Memory-efficient processing**: Automatic cropping to regions of interest reduces memory footprint
+- **Caching no longer needed**: Fast computation is now efficient enough that caching is typically unnecessary
+
 Below is an example visualization of the Voronoi-based mapping process:
 
 ![CC-Metrics Workflow](resources/title_fig.jpg)
@@ -56,6 +62,23 @@ cd CC-Metrics
 pip install -e .
 ```
 
+### GPU Acceleration
+
+CC-Metrics includes optional GPU-accelerated preprocessing for the Voronoi space separation to speed up large-volume evaluations.
+
+- Requirements: NVIDIA GPU, CUDA 12.x, a CUDA-enabled PyTorch, and a matching CuPy build (`cupy-cuda12x`).
+- Install from PyPI with extras: `pip install "CCMetrics[gpu]"` (or `CCMetrics[all]`).
+- Install from source with extras: `pip install -e .[gpu]`.
+
+Usage example:
+
+```python
+from CCMetrics import CCDiceMetricGPU
+cc_dice_gpu = CCDiceMetricGPU(cc_reduction="patient", use_caching=False)
+```
+
+Notes on CPU/GPU parity: CPU and GPU paths share the same algorithm (single-EDT Voronoi + MONAI metrics). Minor numerical differences can occur due to library tie-breaking when assigning equidistant background voxels to components. In our checks across 441 volumes, aggregated CC‑Dice differences were very small (patient-wise mean diff ~1e-5; per-component mean diff ~5e-5), with rare worst-case patient differences up to ~3.5e-3. If exact agreement is required, run the CPU metric path.
+
 ## How to Use CC-Metrics
 
 CC-Metrics defines wrappers around MONAI's Cumulative metrics to enable per-component evaluation.
@@ -71,8 +94,7 @@ import torch
 # Create the metric with desired parameters
 cc_dice = CCDiceMetric(
     cc_reduction="patient",  # Aggregation mode
-    use_caching=True,        # Enable caching for faster repeat evaluations
-    caching_dir=".cache"     # Directory to store cached Voronoi diagrams
+    use_caching=False        # Recommended: use fast computation (v0.0.3+)
 )
 
 # Create sample prediction and ground truth tensors
@@ -166,31 +188,45 @@ overall_results = cc_dice.cc_aggregate(mode="overall")
 
 CC-Metrics requires the computation of a generalized Voronoi diagram which serves as the mapping mechanism between predictions and ground-truth. As the separation of the image space only depends on the ground-truth, the mapping can be cached and reused between intermediate evaluations or across metrics.
 
-#### Benefits of Caching
+#### Recommended Approach (v0.0.3+)
 
-- Significantly faster repeated evaluations
-- Ability to precompute Voronoi regions for large datasets
-- Consistent component mapping across different metrics
-
-#### Using the Caching Feature
-
-Enable caching when instantiating any CC-Metrics metric:
+**We now recommend disabling caching** and relying on the fast computation instead. The new `compute_voronoi_regions_fast` function is so efficient that the overhead of caching often outweighs the benefits:
 
 ```python
+cc_dice = CCDiceMetric(
+    cc_reduction="patient",
+    use_caching=False  # Recommended: use fast computation instead
+)
+```
+
+#### Performance Comparison
+
+Starting with v0.0.3, the Voronoi computation has been significantly optimized. The new `compute_voronoi_regions_fast` function provides:
+- Faster computation through single EDT operations
+- Reduced memory overhead
+- Better scalability for large volumes with many components
+- Improved flexibility
+
+#### Legacy Caching Support
+
+For backward compatibility, caching is still supported but generally not recommended:
+
+```python
+# Legacy approach - not recommended for most use cases
 cc_dice = CCDiceMetric(use_caching=True, caching_dir="/path/to/cache")
 ```
 
-#### Precomputing Cache
-
-For large datasets, you can precompute the Voronoi regions using the provided script:
-
-```bash
-python prepare_caching.py --gt /path/to/ground_truth_nifti_files --cache_dir /path/to/cache --nof_workers 8
-```
-
-This will process all `.nii.gz` files in the specified directory and store the computed Voronoi regions in the cache directory.
-
 ### Advanced Examples
+
+#### Performance Optimizations
+
+CC-Metrics v0.0.3+ includes several performance improvements that make it more efficient for large-scale evaluations:
+
+**Automatic Region Cropping**: The library now automatically crops to the minimal bounding box containing each connected component and its Voronoi region, significantly reducing memory usage and computation time for sparse segmentations.
+
+**Improved Voronoi Computation**: The new `compute_voronoi_regions_fast` function uses a more efficient single EDT (Euclidean Distance Transform) approach, eliminating the need for KDTree-based computations.
+
+**Memory Management**: Enhanced garbage collection and tensor operation optimization reduce memory leaks and improve performance for batch processing.
 
 #### Evaluating Multiple Metrics on the Same Data
 
@@ -208,14 +244,14 @@ y[0, 0] = 1 - y[0, 1]
 y_hat[0, 1, 21:26, 21:26, 21:26] = 1
 y_hat[0, 0] = 1 - y_hat[0, 1]
 
-# Define shared cache directory
-cache_dir = ".cache"
+# Define shared settings (caching no longer recommended)
+use_fast_computation = True
 
 # Initialize metrics
 metrics = {
-    "dice": CCDiceMetric(use_caching=True, caching_dir=cache_dir),
-    "surface_dice": CCSurfaceDiceMetric(use_caching=True, caching_dir=cache_dir, class_thresholds=[1]),
-    "hd95": CCHausdorffDistance95Metric(use_caching=True, caching_dir=cache_dir, metric_worst_score=30)
+    "dice": CCDiceMetric(use_caching=False),
+    "surface_dice": CCSurfaceDiceMetric(use_caching=False, class_thresholds=[1]),
+    "hd95": CCHausdorffDistance95Metric(use_caching=False, metric_worst_score=30)
 }
 
 # Compute all metrics
@@ -228,6 +264,19 @@ print(f"Results: {results}")
 ```
 
 ## FAQ
+
+### Q: What's new in version 2.0?
+
+A: Version 2.0 includes significant performance improvements:
+- New optimized Voronoi computation algorithm (`compute_voronoi_regions_fast`)
+- Automatic region cropping to reduce memory usage
+- Enhanced memory management and tensor operations
+- Overall 2-5x speedup in typical use cases compared to previous version
+- **Caching is no longer recommended** - the fast computation is now efficient enough that caching overhead often exceeds benefits
+
+### Q: Should I use caching?
+
+A: **No, we recommend disabling caching**. The new `compute_voronoi_regions_fast` function is so efficient that the I/O overhead of caching typically outweighs any performance benefits. Simply set `use_caching=False` when initializing metrics.
 
 ### Q: Why use CC-Metrics instead of traditional metrics?
 
