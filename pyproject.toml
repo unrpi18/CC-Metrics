@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "CCMetrics"
-version = "0.0.2"
+version = "0.0.3"
 authors = [
     {name = "Alexander Jaus", email = "alexander.jaus@kit.edu"},
 ]
